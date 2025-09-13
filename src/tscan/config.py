@@ -2,21 +2,20 @@ from typing import Tuple, get_type_hints, Dict, ClassVar, Type
 from pathlib import Path
 from dataclasses import dataclass, field, fields
 
-from tscan.utils.fs_cache import get_cache_dir
-from tscan.utils.validator import ValidateObject
-from tscan.exc.validation import TYPE_ERROR_MSG, NON_NEGATIVE_ERROR_MSG
+from tscan.utils import get_cache_dir, ValidateObject
+from tscan.exc.messages import TYPE_ERROR_MSG, NON_NEGATIVE_ERROR_MSG
 
 
 BASE_CACHE_DIR: Path = get_cache_dir()
 CACHE_FILE: Path = BASE_CACHE_DIR / "tscan_cache.sqlite3"
 
 DEFAULT_CACHE_TTL: int = 300
-DEFAULT_MAX_DEPTH: int = 10
 CACHE_ENABLED: bool = True
-CACHE_MAX_SIZE_MB: int = 10
+CACHE_MAX_SIZE_MB: int = 500
 CACHE_USE_COMPRESSION: bool = False
 
 ENABLE_RICH_FORMATTING: bool = True
+DEFAULT_MAX_DEPTH: int = 10
 IGNORE_HIDDEN: bool = False
 IGNORE_PATTERNS: Tuple[str, ...] = ()
 SHOW_SIZES: bool = True
