@@ -1,15 +1,17 @@
-from typing import List, Optional, Dict, Any, Tuple, TypeAlias, Callable, Literal, Iterable
-from re import sub
+from typing import (
+    List, Optional, Dict, Any, Tuple, TypeAlias, Callable, Literal, Iterable, Sequence, cast
+)
+from re import sub, Match
 
 from tscan.exc import TablenameDoesNotExist, messages
 
 
-ModelTupleValues: TypeAlias = Tuple[Any, Any]
+ModelTupleValues: TypeAlias = Tuple[str, Any]
 ModelListOfTuples: TypeAlias = List[ModelTupleValues]
 ModelDictParams: TypeAlias = Dict[str, ModelListOfTuples]
 
 
-class ModelQuery:
+class _ModelQuery:
     __slots__: Tuple[str, ...] = (
         "__query",
         "__params",
@@ -21,7 +23,7 @@ class ModelQuery:
         "__returning"
     )
     # Mapping of operator name to operator symbol
-    _OPERATOR_MAP: Dict[str, str] = {
+    OPERATOR_MAP: Dict[str, str] = {
         "equal": "=",
         "not_equal": "<>",
         "greater_than": ">",
@@ -74,7 +76,7 @@ class ModelQuery:
         order_by: Optional[List[Tuple[str, str]]] = None,
         pagination: Optional[Tuple[Optional[int], Optional[int]]] = None,
         returning: Optional[List[str]] = None
-    ) -> "ModelQuery":
+    ) -> "_ModelQuery":
         return self.__class__(
             query=query if query is not None else self.__query,
             params=params if params is not None else self.__params,
@@ -87,8 +89,8 @@ class ModelQuery:
         )
 
     @staticmethod
-    def __requires_tablename(func: Callable[..., "ModelQuery"]) -> Callable[..., "ModelQuery"]:
-        def wrapper(self: "ModelQuery", *args: Any, **kwargs: Any) -> "ModelQuery":
+    def __requires_tablename(func: Callable[..., "_ModelQuery"]) -> Callable[..., "_ModelQuery"]:
+        def wrapper(self: "_ModelQuery", *args: Any, **kwargs: Any) -> "_ModelQuery":
             if self.__query is None:
                 raise TablenameDoesNotExist(messages.TABLENAMEDOESNOTEXIST_ERROR_MSG, self)
             return func(self, *args, **kwargs)
@@ -96,10 +98,10 @@ class ModelQuery:
         return wrapper
 
     @staticmethod
-    def _tablename_exists(
-        func: Callable[["ModelQuery", str, Any], "ModelQuery"]
-    ) -> Callable[["ModelQuery", str, Any], "ModelQuery"]:
-        def wrapper(self: "ModelQuery", column: str, value: Any) -> "ModelQuery":
+    def tablename_exists(
+        func: Callable[["_ModelQuery", str, Any], "_ModelQuery"]
+    ) -> Callable[["_ModelQuery", str, Any], "_ModelQuery"]:
+        def wrapper(self: "_ModelQuery", column: str, value: Any) -> "_ModelQuery":
             if self.__query is None:
                 raise TablenameDoesNotExist(messages.TABLENAMEDOESNOTEXIST_ERROR_MSG, self)
             return func(self, column, value)
@@ -107,11 +109,11 @@ class ModelQuery:
         return wrapper
 
     @staticmethod
-    def _create_operator_method(
+    def create_operator_method(
         op_name: str
-    ) -> Callable[["ModelQuery", str, Any], "ModelQuery"]:
-        def method(self: "ModelQuery", column: str, value: Any) -> "ModelQuery":
-            if op_name not in self._OPERATOR_MAP:
+    ) -> Callable[["_ModelQuery", str, Any], "_ModelQuery"]:
+        def method(self: "_ModelQuery", column: str, value: Any) -> "_ModelQuery":
+            if op_name not in self.OPERATOR_MAP:
                 raise NotImplementedError(
                     "The operator '{op_name}' is not supported.".format(op_name=op_name)
                 )
@@ -168,9 +170,9 @@ class ModelQuery:
 
     def __generate_base_params(self) -> ModelDictParams:
         """Generate the base parameters for the query."""
-        return {key: [] for key in self._OPERATOR_MAP.keys()}
+        return {key: [] for key in self.OPERATOR_MAP.keys()}
 
-    def select(self, tablename: str, columns: Optional[List[str]] = None) -> "ModelQuery":
+    def select(self, tablename: str, columns: Optional[List[str]] = None) -> "_ModelQuery":
         """Select the columns from the table."""
         resulted_columns: str = "*" if not columns else ",".join(columns)
         return self.__clone_with(
@@ -181,21 +183,22 @@ class ModelQuery:
         )
 
     @__requires_tablename
-    def where(self, *args: List["ModelQuery"]) -> "ModelQuery":
+    def where(self, *args: "_ModelQuery") -> "_ModelQuery":
         if not args:
             return self
 
         new_params: ModelDictParams = self.__params.copy()
         for arg in args:
-            new_params |= arg.params
-            
+            if arg.params_data is not None:
+                new_params |= arg.params_data
+
         return self.__clone_with(params=new_params)
 
-    def insert(self, tablename: str) -> "ModelQuery":
+    def insert(self, tablename: str) -> "_ModelQuery":
         return self.__clone_with(query="INSERT INTO {tablename}".format(tablename=tablename))
 
     @__requires_tablename
-    def values(self, **kwargs: Dict[str, Any]) -> "ModelQuery":
+    def values(self, **kwargs: Dict[str, Any]) -> "_ModelQuery":
         if not kwargs:
             return self
         
@@ -203,14 +206,14 @@ class ModelQuery:
         new_values.update(kwargs)
         return self.__clone_with(values=new_values)
 
-    def delete(self, tablename: str) -> "ModelQuery":
+    def delete(self, tablename: str) -> "_ModelQuery":
         return self.__clone_with(query="DELETE FROM {tablename}".format(tablename=tablename))
 
-    def update(self, tablename: str) -> "ModelQuery":
+    def update(self, tablename: str) -> "_ModelQuery":
         return self.__clone_with(query="UPDATE {tablename}".format(tablename=tablename))
 
     @__requires_tablename
-    def set(self, **kwargs: Dict[str, Any]) -> "ModelQuery":
+    def set(self, **kwargs: Dict[str, Any]) -> "_ModelQuery":
         if not kwargs:
             return self
         
@@ -219,19 +222,19 @@ class ModelQuery:
         return self.__clone_with(set_values=new_set)
 
     @__requires_tablename
-    def join(self, tablename: str, condition: str) -> "ModelQuery":
+    def join(self, tablename: str, condition: str) -> "_ModelQuery":
         join: List[Tuple[str, str]] = [] if self.__join is None else self.__join.copy()
         join.append((tablename, condition))
         return self.__clone_with(join=join)
 
     @__requires_tablename
-    def order_by(self, column: str, order_type: Literal["ASC", "DESC"] = "ASC") -> "ModelQuery":
+    def order_by(self, column: str, order_type: Literal["ASC", "DESC"] = "ASC") -> "_ModelQuery":
         order_by: List[Tuple[str, str]] = [] if self.__order_by is None else self.__order_by.copy()
         order_by.append((column, order_type))
         return self.__clone_with(order_by=order_by)
 
     @__requires_tablename
-    def limit(self, limit: int) -> "ModelQuery":
+    def limit(self, limit: int) -> "_ModelQuery":
         if limit < 0:
             raise ValueError("Limit must be a positive integer.")
 
@@ -240,7 +243,7 @@ class ModelQuery:
         )
     
     @__requires_tablename
-    def offset(self, offset: int) -> "ModelQuery":
+    def offset(self, offset: int) -> "_ModelQuery":
         if offset < 0:
             raise ValueError("Offset must be a positive integer.")
 
@@ -249,7 +252,7 @@ class ModelQuery:
         )
 
     @__requires_tablename
-    def returning(self, *args: List[str]) -> "ModelQuery":
+    def returning(self, *args: str) -> "_ModelQuery":
         if not args:
             return self
         
@@ -296,7 +299,7 @@ class ModelQuery:
             for op_name, conditions in self.__params.items():
                 if not conditions:
                     continue
-                op_symbol: str = self._OPERATOR_MAP[op_name]
+                op_symbol: str = self.OPERATOR_MAP[op_name]
                 for column, value in conditions:
                     if op_name in ("is_null", "is_not_null"):
                         where_clauses.append(f"{column} {op_symbol}")
@@ -305,9 +308,10 @@ class ModelQuery:
                             raise ValueError(
                                 "The 'in' and 'not_in' operators require a list or tuple."
                             )
-                        placeholders: str = ", ".join(["?"] * len(value))
+                        seq: Sequence[Any] = cast(Sequence[Any], value)
+                        placeholders: str = ", ".join(["?"] * len(seq))
                         where_clauses.append(f"{column} {op_symbol} ({placeholders})")
-                        params.extend(value)
+                        params.extend(seq)
                     else:
                         where_clauses.append(f"{column} {op_symbol} ?")
                         params.append(value)
@@ -346,9 +350,9 @@ class ModelQuery:
         """
         try:
             sql, params = self.build()
-            param_iter: Iterable = iter(params)
+            param_iter: Iterable[Any] = iter(params)
 
-            def replacer(match: str) -> str:
+            def replacer(match: Match[str]) -> str:
                 try:
                     val: Any = next(param_iter)
                     if val is None:
@@ -381,9 +385,3 @@ class ModelQuery:
 
     def __str__(self) -> str:
         return self.__repr__()
-
-
-for op_name in ModelQuery._OPERATOR_MAP:
-    method = ModelQuery._create_operator_method(op_name)
-    decorated_method = ModelQuery._tablename_exists(method)
-    setattr(ModelQuery, op_name, decorated_method)
